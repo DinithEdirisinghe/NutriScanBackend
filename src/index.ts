@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { AppDataSource } from './config/database';
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
+import scanRoutes from './routes/scan.routes';
 
 // Load environment variables
 dotenv.config();
@@ -29,6 +30,7 @@ app.get('/health', (req: Request, res: Response) => {
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/scan', scanRoutes);
 
 // 404 Handler
 app.use((req: Request, res: Response) => {

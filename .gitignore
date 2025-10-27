@@ -44,3 +44,6 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Uploads (temporary image files)
+uploads/
