@@ -35,5 +35,6 @@ const upload = multer({
 // Routes
 router.get('/test', scanController.testEndpoint);
 router.post('/analyze', authMiddleware, upload.single('image'), scanController.analyzeLLabel);
+router.post('/food-photo', authMiddleware, upload.single('image'), scanController.analyzeFoodPhoto);
 
 export default router;

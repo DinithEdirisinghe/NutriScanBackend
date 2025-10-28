@@ -1,6 +1,7 @@
 import { DataSource } from 'typeorm';
 import dotenv from 'dotenv';
 import { User } from '../entities/User.entity';
+import { Scan } from '../entities/Scan.entity';
 
 dotenv.config();
 
@@ -13,7 +14,7 @@ export const AppDataSource = new DataSource({
   database: process.env.DB_DATABASE || 'nutriscore',
   synchronize: true, // Auto-create tables (disable in production!)
   logging: process.env.NODE_ENV === 'development',
-  entities: [User],
+  entities: [User, Scan],
   subscribers: [],
   migrations: [],
 });

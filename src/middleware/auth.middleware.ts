@@ -2,8 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
 export interface AuthRequest extends Request {
-  userId?: string;
-  email?: string;
+  user?: {
+    userId: string;
+    email: string;
+  };
 }
 
 interface JwtPayload {
@@ -36,9 +38,11 @@ export const authMiddleware = (
       process.env.JWT_SECRET || 'fallback-secret'
     ) as JwtPayload;
 
-    // Attach user info to request
-    req.userId = decoded.userId;
-    req.email = decoded.email;
+    // Attach user info to request object (as req.user)
+    req.user = {
+      userId: decoded.userId,
+      email: decoded.email,
+    };
 
     next();
   } catch (error) {
