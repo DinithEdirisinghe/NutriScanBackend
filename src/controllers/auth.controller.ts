@@ -100,10 +100,10 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       user: {
         id: user.id,
         email: user.email,
-        blood_sugar_mg_dl: user.blood_sugar_mg_dl,
-        ldl_cholesterol_mg_dl: user.ldl_cholesterol_mg_dl,
-        weight_kg: user.weight_kg,
-        height_cm: user.height_cm,
+        glucose: user.glucose,
+        ldl: user.ldl,
+        weight: user.weight,
+        height: user.height,
       },
     });
   } catch (error) {

@@ -85,7 +85,18 @@ export class AdvancedScoringService {
    * Convert NutritionData to FoodNutrients interface
    */
   private nutritionToFoodNutrients(nutrition: NutritionData): FoodNutrients {
+    // Parse serving size from string (e.g., "20g" -> 20)
+    let servingSize: number | undefined;
+    if (nutrition.servingSize) {
+      const match = nutrition.servingSize.match(/(\d+(?:\.\d+)?)/);
+      if (match) {
+        servingSize = parseFloat(match[1]);
+        console.log(`📦 Parsed serving size: "${nutrition.servingSize}" → ${servingSize}g`);
+      }
+    }
+    
     return {
+      servingSize,
       calories: nutrition.calories,
       sugar: nutrition.sugars,
       sfa: nutrition.saturatedFat,
@@ -104,11 +115,13 @@ export class AdvancedScoringService {
    */
   calculateAdvancedScore(
     nutritionData: NutritionData,
-    user?: User
+    user?: User,
+    scoringMode?: 'portion-aware' | 'per-100g'
   ): AdvancedHealthScore {
     console.log('🧠 Calculating advanced health score using diet risk formula...');
     console.log('📊 Nutrition data:', nutritionData);
     console.log('👤 User profile:', user);
+    console.log('⚙️ Scoring mode:', scoringMode || user?.scoringMode || 'portion-aware');
 
     const warnings: string[] = [];
     const recommendations: string[] = [];
@@ -117,11 +130,15 @@ export class AdvancedScoringService {
     const personMarkers = user ? this.userToPersonMarkers(user) : {};
     const foodNutrients = this.nutritionToFoodNutrients(nutritionData);
 
+    // Determine scoring mode (parameter > user preference > default)
+    const effectiveScoringMode = scoringMode || (user?.scoringMode as 'portion-aware' | 'per-100g') || 'portion-aware';
+
     // Compute suitability using the diet risk formula
     const result: SuitabilityResult = computeWithPhysicals(
       personMarkers,
       foodNutrients,
-      this.config
+      this.config,
+      effectiveScoringMode
     );
 
     // Scale to 0-100

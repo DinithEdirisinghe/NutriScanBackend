@@ -42,6 +42,7 @@ export interface PersonMarkers {
 }
 
 export interface FoodNutrients {
+  servingSize?: number;    // g or ml - Serving size (for density calculation)
   calories?: number;       // kcal/serving - Total energy
   sugar?: number;          // g - Total sugar
   sfa?: number;            // g - Saturated fat
@@ -112,17 +113,19 @@ export const defaultConfig: ModelConfig = {
     diastolic: { low: 50, high: 120 },
   },
   
+  // NOTE: All nutrient bounds are per 100g/ml to ensure fair comparison
+  // regardless of serving size
   nutrientBounds: {
-    calories: { low: 0, high: 1000 },
-    sugar: { low: 0, high: 60 },
-    sfa: { low: 0, high: 20 },
-    transFat: { low: 0, high: 5 },
-    unsatFat: { low: 0, high: 20 },
-    sodium: { low: 0, high: 2000 },
-    cholesterol: { low: 0, high: 300 },
-    fiber: { low: 0, high: 15 },
-    protein: { low: 0, high: 40 },
-    carbs: { low: 0, high: 100 },
+    calories: { low: 0, high: 600 },     // per 100g (very dense foods ~600 kcal/100g)
+    sugar: { low: 0, high: 80 },         // per 100g (pure sugar = 100g/100g)
+    sfa: { low: 0, high: 50 },           // per 100g (butter = ~50g/100g)
+    transFat: { low: 0, high: 10 },      // per 100g
+    unsatFat: { low: 0, high: 50 },      // per 100g (oils = ~100g/100g)
+    sodium: { low: 0, high: 5000 },      // per 100g (salt = ~38,000mg/100g)
+    cholesterol: { low: 0, high: 500 },  // per 100g (egg yolk = ~1,085mg/100g)
+    fiber: { low: 0, high: 30 },         // per 100g (wheat bran = ~40g/100g)
+    protein: { low: 0, high: 80 },       // per 100g (protein powder = ~80g/100g)
+    carbs: { low: 0, high: 100 },        // per 100g (pure sugar = 100g/100g)
   },
   
   nutrientMarkerMapping: {
@@ -212,18 +215,105 @@ function calculateBMI(heightCm: number, weightKg: number): number {
 }
 
 /**
+ * Normalize nutrients to per-100g basis for fair comparison
+ * 
+ * This ensures that nutrient density is properly accounted for:
+ * - 20g food with 5g sugar (25% density) → 25g sugar per 100g
+ * - 100g food with 10g sugar (10% density) → 10g sugar per 100g
+ * 
+ * @param food - Original food nutrients (may be for any serving size)
+ * @returns Food nutrients normalized to per-100g basis
+ */
+function normalizeNutrientsPer100g(food: FoodNutrients): FoodNutrients {
+  const servingSize = food.servingSize || 100; // Default to 100g if not provided
+  
+  // If already 100g, no normalization needed
+  if (servingSize === 100) {
+    return { ...food };
+  }
+  
+  // Scale all nutrients to per-100g basis
+  const scaleFactor = 100 / servingSize;
+  
+  return {
+    servingSize: 100, // Normalized serving size
+    calories: food.calories !== undefined ? food.calories * scaleFactor : undefined,
+    sugar: food.sugar !== undefined ? food.sugar * scaleFactor : undefined,
+    sfa: food.sfa !== undefined ? food.sfa * scaleFactor : undefined,
+    transFat: food.transFat !== undefined ? food.transFat * scaleFactor : undefined,
+    unsatFat: food.unsatFat !== undefined ? food.unsatFat * scaleFactor : undefined,
+    sodium: food.sodium !== undefined ? food.sodium * scaleFactor : undefined,
+    cholesterol: food.cholesterol !== undefined ? food.cholesterol * scaleFactor : undefined,
+    fiber: food.fiber !== undefined ? food.fiber * scaleFactor : undefined,
+    protein: food.protein !== undefined ? food.protein * scaleFactor : undefined,
+    carbs: food.carbs !== undefined ? food.carbs * scaleFactor : undefined,
+  };
+}
+
+/**
+ * Calculate serving size risk multiplier
+ * 
+ * Small serving sizes often indicate concentrated/processed foods that should
+ * carry higher risk. This multiplier amplifies the risk for very small servings.
+ * 
+ * Examples:
+ * - 10g serving → 1.6× risk multiplier (very concentrated, like candy)
+ * - 20g serving → 1.4× risk multiplier (concentrated, like chips)
+ * - 50g serving → 1.2× risk multiplier (moderately concentrated)
+ * - 100g serving → 1.0× baseline (standard comparison)
+ * - 200g serving → 0.9× risk multiplier (dilute, like soup)
+ * 
+ * @param servingSize - Serving size in grams
+ * @returns Risk multiplier (1.0 = baseline for 100g)
+ */
+function calculateServingSizeRiskMultiplier(servingSize: number): number {
+  const baseSize = 100; // Reference serving size
+  
+  if (servingSize >= baseSize) {
+    // Large servings get slight reduction (0.9× minimum)
+    return Math.max(0.9, 1 - (servingSize - baseSize) / 1000);
+  } else {
+    // Small servings get amplified risk
+    // 10g → 1.6×, 20g → 1.4×, 50g → 1.2×, 100g → 1.0×
+    const ratio = servingSize / baseSize;
+    return 1 + (1 - ratio) * 0.6; // Up to 60% increase for very small servings
+  }
+}
+
+/**
  * Compute food suitability score
+ * 
+ * @param person - User's health markers
+ * @param food - Food nutritional data
+ * @param cfg - Model configuration
+ * @param scoringMode - Scoring mode: 'portion-aware' (default) or 'per-100g'
  */
 export function computeFoodSuitability(
   person: PersonMarkers,
   food: FoodNutrients,
-  cfg: ModelConfig = defaultConfig
+  cfg: ModelConfig = defaultConfig,
+  scoringMode: 'portion-aware' | 'per-100g' = 'portion-aware'
 ): SuitabilityResult {
   // Step 1: Prepare person markers (calculate BMI if needed)
   const markers = { ...person };
   if (!markers.bmi && markers.height && markers.weight) {
     markers.bmi = calculateBMI(markers.height, markers.weight);
   }
+  
+  // Step 1.5: Normalize food nutrients to per-100g for fair density comparison
+  const originalServingSize = food.servingSize || 100;
+  const normalizedFood = normalizeNutrientsPer100g(food);
+  
+  // Apply serving size multiplier only if in portion-aware mode
+  const servingSizeMultiplier = scoringMode === 'portion-aware' 
+    ? calculateServingSizeRiskMultiplier(originalServingSize)
+    : 1.0;
+  
+  console.log('🔍 DENSITY DEBUG:');
+  console.log(`   Original serving: ${originalServingSize}g`);
+  console.log(`   Original SFA: ${food.sfa}g`);
+  console.log(`   Normalized SFA (per 100g): ${normalizedFood.sfa}g`);
+  console.log(`   Serving size multiplier: ${servingSizeMultiplier.toFixed(2)}×`);
   
   // Step 2: Normalize all markers
   const normalizedMarkers: { [key: string]: number } = {};
@@ -241,13 +331,13 @@ export function computeFoodSuitability(
     }
   });
   
-  // Step 3: Normalize all nutrients
+  // Step 3: Normalize all nutrients (now using per-100g normalized values)
   const normalizedNutrients: { [key: string]: number } = {};
   const availableNutrients: string[] = [];
   const missingNutrients: string[] = [];
   
   Object.keys(cfg.nutrientBounds).forEach(nutrientKey => {
-    const value = (food as any)[nutrientKey];
+    const value = (normalizedFood as any)[nutrientKey];
     if (value !== undefined && value !== null) {
       const bounds = cfg.nutrientBounds[nutrientKey];
       normalizedNutrients[nutrientKey] = normalize(value, bounds.low, bounds.high);
@@ -296,9 +386,15 @@ export function computeFoodSuitability(
   });
   
   // Step 6: Calculate final suitability score
-  // Normalize by available weights
-  const normalizedRisk = totalWeight > 0 ? totalRisk / totalWeight : 0;
-  const score = Math.max(0, Math.min(1, 1 - normalizedRisk));
+  // Apply serving size multiplier to amplify risk for small/concentrated servings
+  const adjustedRisk = totalWeight > 0 ? (totalRisk / totalWeight) * servingSizeMultiplier : 0;
+  const score = Math.max(0, Math.min(1, 1 - adjustedRisk));
+  
+  console.log('📊 RISK CALCULATION:');
+  console.log(`   Scoring mode: ${scoringMode}`);
+  console.log(`   Total risk (before multiplier): ${(totalRisk / totalWeight).toFixed(4)}`);
+  console.log(`   Adjusted risk (after ${servingSizeMultiplier.toFixed(2)}× multiplier): ${adjustedRisk.toFixed(4)}`);
+  console.log(`   Final score (1 - risk): ${score.toFixed(4)} = ${(score * 100).toFixed(0)}/100`);
   
   // Step 7: Calculate confidence
   const totalMarkers = Object.keys(cfg.markerBounds).length;
@@ -308,6 +404,10 @@ export function computeFoodSuitability(
   if (confidence < 0.5) {
     console.warn('⚠️ Low confidence: More than 50% of markers are missing');
   }
+  
+  // Add serving size info to debug output
+  const modeLabel = scoringMode === 'portion-aware' ? '(portion-aware)' : '(per-100g only)';
+  console.log(`📏 Serving size: ${originalServingSize}g → Multiplier: ${servingSizeMultiplier.toFixed(2)}× ${modeLabel}`);
   
   return {
     score,
@@ -327,9 +427,10 @@ export function computeFoodSuitability(
 export function computeWithPhysicals(
   person: PersonMarkers,
   food: FoodNutrients,
-  cfg: ModelConfig = defaultConfig
+  cfg: ModelConfig = defaultConfig,
+  scoringMode: 'portion-aware' | 'per-100g' = 'portion-aware'
 ): SuitabilityResult {
-  return computeFoodSuitability(person, food, cfg);
+  return computeFoodSuitability(person, food, cfg, scoringMode);
 }
 
 /**

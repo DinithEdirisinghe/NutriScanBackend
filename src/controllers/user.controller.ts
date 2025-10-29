@@ -50,6 +50,8 @@ export const getProfile = async (
       creatinine: user.creatinine,
       crp: user.crp,
       uric_acid: user.uric_acid,
+      // Scoring preferences
+      scoringMode: user.scoringMode,
     });
   } catch (error) {
     console.error('Get profile error:', error);
@@ -91,6 +93,8 @@ export const updateProfile = async (
       creatinine,
       crp,
       uric_acid,
+      // Scoring preferences
+      scoringMode,
     } = req.body;
 
     const user = await userRepository.findOne({
@@ -127,6 +131,13 @@ export const updateProfile = async (
     if (creatinine !== undefined) user.creatinine = creatinine;
     if (crp !== undefined) user.crp = crp;
     if (uric_acid !== undefined) user.uric_acid = uric_acid;
+    // Scoring preferences
+    if (scoringMode !== undefined) {
+      // Validate scoring mode
+      if (scoringMode === 'portion-aware' || scoringMode === 'per-100g') {
+        user.scoringMode = scoringMode;
+      }
+    }
 
     await userRepository.save(user);
 
@@ -159,6 +170,8 @@ export const updateProfile = async (
         creatinine: user.creatinine,
         crp: user.crp,
         uric_acid: user.uric_acid,
+        // Scoring preferences
+        scoringMode: user.scoringMode,
       },
     });
   } catch (error) {

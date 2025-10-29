@@ -79,6 +79,10 @@ export class User {
   @Column({ type: 'int', nullable: true })
   age?: number; // Age in years
 
+  // === Scoring Preferences ===
+  @Column({ type: 'varchar', length: 20, default: 'portion-aware' })
+  scoringMode?: string; // 'portion-aware' or 'per-100g'
+
   @CreateDateColumn()
   created_at!: Date;
 
