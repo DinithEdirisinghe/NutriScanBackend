@@ -117,7 +117,7 @@ export const defaultConfig: ModelConfig = {
   // regardless of serving size
   nutrientBounds: {
     calories: { low: 0, high: 600 },     // per 100g (very dense foods ~600 kcal/100g)
-    sugar: { low: 0, high: 80 },         // per 100g (pure sugar = 100g/100g)
+    sugar: { low: 0, high: 15 },         // per 100g/ml (LOWERED: Coke has ~10.6g/100ml, realistic max ~15g)
     sfa: { low: 0, high: 50 },           // per 100g (butter = ~50g/100g)
     transFat: { low: 0, high: 10 },      // per 100g
     unsatFat: { low: 0, high: 50 },      // per 100g (oils = ~100g/100g)
@@ -135,6 +135,8 @@ export const defaultConfig: ModelConfig = {
       triglycerides: 2.5, // Increased penalty
       bmi: 2.0,         // Increased penalty
       waist: 2.0,       // Increased penalty
+      ldl: 1.5,         // Sugar also affects LDL (via triglycerides)
+      crp: 1.0,         // Sugar causes inflammation
     },
     sfa: {
       ldl: 5.0,       // EXTREMELY high penalty for high cholesterol users
@@ -173,6 +175,8 @@ export const defaultConfig: ModelConfig = {
     carbs: {
       glucose: 0.7,
       triglycerides: 0.3,
+      bmi: 0.5,        // Carbs contribute to weight gain
+      waist: 0.4,      // Especially refined carbs
     },
   },
   
@@ -388,7 +392,37 @@ export function computeFoodSuitability(
   // Step 6: Calculate final suitability score
   // Apply serving size multiplier to amplify risk for small/concentrated servings
   const adjustedRisk = totalWeight > 0 ? (totalRisk / totalWeight) * servingSizeMultiplier : 0;
-  const score = Math.max(0, Math.min(1, 1 - adjustedRisk));
+  let score = Math.max(0, Math.min(1, 1 - adjustedRisk));
+  
+  // Step 6.5: Apply penalty for nutritionally empty foods
+  // If a food has ZERO protein AND ZERO fiber AND has calories, it's nutritionally empty (e.g., soda, candy)
+  // These foods should score lower because they provide only calories without nutrients
+  // EXCEPTION: Zero-calorie foods/beverages (water, tea, diet soda) are NOT penalized
+  const hasProtein = normalizedFood.protein !== undefined && normalizedFood.protein > 0;
+  const hasFiber = normalizedFood.fiber !== undefined && normalizedFood.fiber > 0;
+  const isProteinZero = normalizedFood.protein !== undefined && normalizedFood.protein === 0;
+  const isFiberZero = normalizedFood.fiber !== undefined && normalizedFood.fiber === 0;
+  const hasCalories = normalizedFood.calories !== undefined && normalizedFood.calories > 0;
+  
+  if (isProteinZero && isFiberZero && hasCalories) {
+    // Nutritionally empty food with calories - apply 40% penalty (multiply score by 0.6)
+    // Examples: soda, candy, sugar water
+    const originalScore = score;
+    score = score * 0.6;
+    console.warn(`⚠️ NUTRITIONAL EMPTINESS PENALTY: protein=0, fiber=0, ${normalizedFood.calories}cal`);
+    console.log(`   Score before penalty: ${(originalScore * 100).toFixed(0)}/100`);
+    console.log(`   Score after 40% penalty: ${(score * 100).toFixed(0)}/100`);
+  } else if (isProteinZero && isFiberZero && !hasCalories) {
+    // Zero-calorie beverage (water, tea, diet soda) - NO PENALTY
+    console.log(`✅ ZERO-CALORIE BEVERAGE: No nutritional emptiness penalty`);
+  } else if (!hasProtein && !hasFiber) {
+    // Both missing from label (unknown) - smaller penalty (20%)
+    const originalScore = score;
+    score = score * 0.8;
+    console.warn(`⚠️ MISSING NUTRITION DATA PENALTY: protein AND fiber not on label`);
+    console.log(`   Score before penalty: ${(originalScore * 100).toFixed(0)}/100`);
+    console.log(`   Score after 20% penalty: ${(score * 100).toFixed(0)}/100`);
+  }
   
   console.log('📊 RISK CALCULATION:');
   console.log(`   Scoring mode: ${scoringMode}`);

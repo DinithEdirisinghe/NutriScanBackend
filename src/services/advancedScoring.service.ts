@@ -85,13 +85,30 @@ export class AdvancedScoringService {
    * Convert NutritionData to FoodNutrients interface
    */
   private nutritionToFoodNutrients(nutrition: NutritionData): FoodNutrients {
-    // Parse serving size from string (e.g., "20g" -> 20)
+    // Parse serving size from string (e.g., "20g" -> 20, "266ml" -> 266)
     let servingSize: number | undefined;
     if (nutrition.servingSize) {
-      const match = nutrition.servingSize.match(/(\d+(?:\.\d+)?)/);
+      // Extract number and unit (e.g., "266ml" -> ["266", "ml"])
+      const match = nutrition.servingSize.match(/(\d+(?:\.\d+)?)\s*(ml|g|mg|oz|fl oz)?/i);
       if (match) {
-        servingSize = parseFloat(match[1]);
-        console.log(`📦 Parsed serving size: "${nutrition.servingSize}" → ${servingSize}g`);
+        const value = parseFloat(match[1]);
+        const unit = match[2]?.toLowerCase() || 'g'; // Default to grams if no unit
+        
+        // Convert to grams if needed
+        if (unit === 'ml' || unit === 'fl oz') {
+          // For liquids, assume density ≈ 1 g/ml (water-like beverages)
+          // This is accurate for water, soda, juice, milk (0.95-1.05 g/ml)
+          servingSize = unit === 'fl oz' ? value * 29.5735 : value; // 1 fl oz ≈ 29.57 ml ≈ 29.57 g
+          console.log(`📦 Parsed serving size: "${nutrition.servingSize}" → ${value}${unit} → ${servingSize}g (liquid)`);
+        } else if (unit === 'oz') {
+          // Solid ounces to grams (1 oz = 28.35 g)
+          servingSize = value * 28.3495;
+          console.log(`📦 Parsed serving size: "${nutrition.servingSize}" → ${value}${unit} → ${servingSize}g`);
+        } else {
+          // Already in grams or mg
+          servingSize = unit === 'mg' ? value / 1000 : value;
+          console.log(`📦 Parsed serving size: "${nutrition.servingSize}" → ${servingSize}g`);
+        }
       }
     }
     
