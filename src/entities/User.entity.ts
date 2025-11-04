@@ -17,43 +17,15 @@ export class User {
   @Column()
   password!: string; // Hashed password
 
-  // === Blood Glucose Markers ===
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  glucose?: number; // Fasting glucose (mg/dL)
+  // === Health Conditions (Simple Toggle) ===
+  @Column({ type: 'boolean', default: false })
+  hasDiabetes!: boolean;
 
-  @Column({ type: 'decimal', precision: 4, scale: 2, nullable: true })
-  hba1c?: number; // HbA1c percentage
+  @Column({ type: 'boolean', default: false })
+  hasHighCholesterol!: boolean;
 
-  // === Lipid Panel ===
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  ldl?: number; // LDL cholesterol (mg/dL)
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  hdl?: number; // HDL cholesterol (mg/dL)
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  triglycerides?: number; // Triglycerides (mg/dL)
-
-  // === Liver Enzymes ===
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  alt?: number; // Alanine aminotransferase (U/L)
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  ast?: number; // Aspartate aminotransferase (U/L)
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  ggt?: number; // Gamma-glutamyl transferase (U/L)
-
-  // === Kidney Function ===
-  @Column({ type: 'decimal', precision: 4, scale: 2, nullable: true })
-  creatinine?: number; // Creatinine (mg/dL)
-
-  // === Inflammation & Other Markers ===
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  crp?: number; // C-reactive protein (mg/L)
-
-  @Column({ type: 'decimal', precision: 4, scale: 2, nullable: true })
-  uric_acid?: number; // Uric acid (mg/dL)
+  @Column({ type: 'boolean', default: false })
+  hasHighBloodPressure!: boolean;
 
   // === Physical Measurements ===
   @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
@@ -62,30 +34,36 @@ export class User {
   @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
   height?: number; // Height (cm)
 
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  waist?: number; // Waist circumference (cm)
-
-  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
-  bmi?: number; // Body Mass Index
-
-  // === Blood Pressure ===
-  @Column({ type: 'int', nullable: true })
-  systolic?: number; // Systolic blood pressure (mmHg)
-
-  @Column({ type: 'int', nullable: true })
-  diastolic?: number; // Diastolic blood pressure (mmHg)
-
-  // === Demographics ===
-  @Column({ type: 'int', nullable: true })
-  age?: number; // Age in years
-
-  // === Scoring Preferences ===
-  @Column({ type: 'varchar', length: 20, default: 'portion-aware' })
-  scoringMode?: string; // 'portion-aware' or 'per-100g'
-
   @CreateDateColumn()
   created_at!: Date;
 
   @UpdateDateColumn()
   updated_at!: Date;
+
+  // Computed property: BMI
+  get bmi(): number | null {
+    if (this.weight && this.height) {
+      const heightInMeters = this.height / 100;
+      return Number((this.weight / (heightInMeters * heightInMeters)).toFixed(1));
+    }
+    return null;
+  }
+
+  // Computed property: BMI category
+  get bmiCategory(): string {
+    const bmiValue = this.bmi;
+    if (!bmiValue) return 'Unknown';
+    if (bmiValue < 18.5) return 'Underweight';
+    if (bmiValue < 25) return 'Normal';
+    if (bmiValue < 30) return 'Overweight';
+    return 'Obese';
+  }
+
+  // Computed property: Is healthy (no conditions and normal BMI)
+  get isHealthy(): boolean {
+    return !this.hasDiabetes && 
+           !this.hasHighCholesterol && 
+           !this.hasHighBloodPressure && 
+           this.bmiCategory === 'Normal';
+  }
 }

@@ -1,14 +1,21 @@
-import { NutritionData } from './ocr.service';
+import { User } from '../entities/User.entity';
 
-export interface HealthProfile {
-  bloodSugarMgDl?: number;
-  ldlCholesterolMgDl?: number;
-  weightKg?: number;
-  heightCm?: number;
+export interface NutritionData {
+  calories?: number;
+  totalFat?: number;
+  saturatedFat?: number;
+  transFat?: number;
+  cholesterol?: number;
+  sodium?: number;
+  totalCarbohydrates?: number;
+  dietaryFiber?: number;
+  sugars?: number;
+  protein?: number;
+  servingSize?: string;
 }
 
 export interface HealthScore {
-  overallScore: number; // 0-100
+  overallScore: number;
   breakdown: {
     sugarScore: number;
     fatScore: number;
@@ -21,399 +28,341 @@ export interface HealthScore {
 }
 
 export class ScoringService {
-  /**
-   * Calculate health score based on nutrition data and user profile
-   * Uses DYNAMIC WEIGHTS based on user's health risks
-   */
-  calculateScore(
-    nutritionData: NutritionData,
-    userProfile?: HealthProfile
-  ): HealthScore {
-    console.log('🧮 Calculating health score...');
-    console.log('📊 Nutrition data:', nutritionData);
-    console.log('👤 User profile:', userProfile);
-
+  calculateScore(nutritionData: NutritionData, user?: User): HealthScore {
+    console.log('🧮 Calculating intelligent health score...');
+    
     const warnings: string[] = [];
     const recommendations: string[] = [];
 
-    // Assess user's health risks
-    const healthRisks = this.assessHealthRisks(userProfile);
-    console.log('🏥 Health risks identified:', healthRisks);
+    const sugarScore = this.scoreSugar(
+      nutritionData.sugars, 
+      nutritionData.dietaryFiber,
+      user, 
+      warnings, 
+      recommendations
+    );
+    const fatScore = this.scoreFat(
+      nutritionData.totalFat,
+      nutritionData.saturatedFat, 
+      nutritionData.transFat, 
+      user, 
+      warnings, 
+      recommendations
+    );
+    const sodiumScore = this.scoreSodium(nutritionData.sodium, user, warnings, recommendations);
+    const calorieScore = this.scoreCalories(nutritionData.calories, user, warnings, recommendations);
 
-    // Score each component (0-100, higher is better)
-    const sugarScore = this.scoreSugar(nutritionData.sugars, userProfile, healthRisks, warnings, recommendations);
-    const fatScore = this.scoreFat(nutritionData.saturatedFat, nutritionData.transFat, userProfile, healthRisks, warnings, recommendations);
-    const sodiumScore = this.scoreSodium(nutritionData.sodium, healthRisks, warnings, recommendations);
-    const calorieScore = this.scoreCalories(nutritionData.calories, userProfile, healthRisks, warnings, recommendations);
+    // New: Apply glycemic impact penalty for diabetics
+    const glycemicPenalty = this.calculateGlycemicPenalty(
+      nutritionData.totalCarbohydrates,
+      nutritionData.dietaryFiber,
+      nutritionData.sugars,
+      user,
+      warnings,
+      recommendations
+    );
 
-    // Calculate DYNAMIC weights based on user's health risks
-    const weights = this.calculateDynamicWeights(healthRisks);
-    console.log('⚖️ Dynamic weights applied:', weights);
+    const weights = this.calculateWeights(user);
 
-    // Calculate weighted overall score with personalized weights
-    const overallScore = Math.round(
+    let overallScore = Math.round(
       (sugarScore * weights.sugar) +
       (fatScore * weights.fat) +
       (sodiumScore * weights.sodium) +
       (calorieScore * weights.calorie)
     );
 
-    const category = this.getCategory(overallScore);
+    // Apply glycemic penalty (reduces score for high-carb refined foods)
+    overallScore = Math.max(0, overallScore - glycemicPenalty);
 
-    const result: HealthScore = {
+    return {
       overallScore,
-      breakdown: {
-        sugarScore,
-        fatScore,
-        sodiumScore,
-        calorieScore,
-      },
+      breakdown: { sugarScore, fatScore, sodiumScore, calorieScore },
       warnings,
       recommendations,
-      category,
+      category: this.getCategory(overallScore),
     };
-
-    console.log('✅ Score calculated:', result);
-    return result;
   }
 
-  /**
-   * Assess user's health risks based on medical data
-   */
-  private assessHealthRisks(userProfile?: HealthProfile): {
-    hasHighBloodSugar: boolean;
-    hasDiabetes: boolean;
-    hasHighCholesterol: boolean;
-    hasVeryHighCholesterol: boolean;
-    isOverweight: boolean;
-    isObese: boolean;
-    bmi?: number;
-  } {
-    const risks = {
-      hasHighBloodSugar: false,
-      hasDiabetes: false,
-      hasHighCholesterol: false,
-      hasVeryHighCholesterol: false,
-      isOverweight: false,
-      isObese: false,
-      bmi: undefined as number | undefined,
+  private calculateWeights(user?: User) {
+    if (!user || user.isHealthy) {
+      return { sugar: 0.25, fat: 0.25, sodium: 0.25, calorie: 0.25 };
+    }
+
+    const weights = { sugar: 0.25, fat: 0.25, sodium: 0.25, calorie: 0.25 };
+
+    // Increase sugar weight for diabetics (more important than other factors)
+    if (user.hasDiabetes) weights.sugar = 0.55;
+    if (user.hasHighCholesterol) weights.fat = 0.40;
+    if (user.hasHighBloodPressure) weights.sodium = 0.40;
+    
+    if (user.bmiCategory === 'Obese') weights.calorie = 0.40;
+    else if (user.bmiCategory === 'Overweight') weights.calorie = 0.35;
+    else if (user.bmiCategory === 'Underweight') weights.calorie = 0.15;
+
+    const sum = weights.sugar + weights.fat + weights.sodium + weights.calorie;
+    return {
+      sugar: weights.sugar / sum,
+      fat: weights.fat / sum,
+      sodium: weights.sodium / sum,
+      calorie: weights.calorie / sum,
     };
-
-    if (!userProfile) return risks;
-
-    // Blood Sugar Assessment
-    if (userProfile.bloodSugarMgDl) {
-      const bloodSugar = userProfile.bloodSugarMgDl;
-      risks.hasHighBloodSugar = bloodSugar >= 100; // Pre-diabetes range
-      risks.hasDiabetes = bloodSugar >= 126; // Diabetes range
-    }
-
-    // LDL Cholesterol Assessment
-    if (userProfile.ldlCholesterolMgDl) {
-      const ldl = userProfile.ldlCholesterolMgDl;
-      risks.hasHighCholesterol = ldl >= 130; // Borderline high
-      risks.hasVeryHighCholesterol = ldl >= 160; // High
-    }
-
-    // BMI Assessment (Weight/Height)
-    if (userProfile.weightKg && userProfile.heightCm) {
-      const heightM = userProfile.heightCm / 100;
-      const bmi = userProfile.weightKg / (heightM * heightM);
-      risks.bmi = Math.round(bmi * 10) / 10;
-      risks.isOverweight = bmi >= 25; // Overweight
-      risks.isObese = bmi >= 30; // Obese
-    }
-
-    return risks;
   }
 
-  /**
-   * Calculate dynamic weights based on user's health priorities
-   * Higher risk = higher weight for that component
-   */
-  private calculateDynamicWeights(healthRisks: ReturnType<typeof this.assessHealthRisks>): {
-    sugar: number;
-    fat: number;
-    sodium: number;
-    calorie: number;
-  } {
-    // Default weights (sum = 1.0)
-    let weights = {
-      sugar: 0.25,
-      fat: 0.25,
-      sodium: 0.25,
-      calorie: 0.25,
-    };
-
-    let totalBoost = 0;
-
-    // PRIORITY 1: Diabetes/High Blood Sugar → Boost sugar weight heavily
-    if (healthRisks.hasDiabetes) {
-      weights.sugar = 0.50; // 50% weight
-      totalBoost += 0.25;
-      console.log('🩸 DIABETES DETECTED: Sugar score heavily prioritized (50%)');
-    } else if (healthRisks.hasHighBloodSugar) {
-      weights.sugar = 0.40; // 40% weight
-      totalBoost += 0.15;
-      console.log('⚠️ High blood sugar: Sugar score prioritized (40%)');
-    }
-
-    // PRIORITY 2: High Cholesterol → Boost fat weight
-    if (healthRisks.hasVeryHighCholesterol) {
-      weights.fat = 0.45; // 45% weight
-      totalBoost += 0.20;
-      console.log('❤️ VERY HIGH LDL: Fat score heavily prioritized (45%)');
-    } else if (healthRisks.hasHighCholesterol) {
-      weights.fat = 0.35; // 35% weight
-      totalBoost += 0.10;
-      console.log('⚠️ High LDL: Fat score prioritized (35%)');
-    }
-
-    // PRIORITY 3: Obesity → Boost calorie weight
-    if (healthRisks.isObese) {
-      weights.calorie = 0.40; // 40% weight
-      totalBoost += 0.15;
-      console.log('⚖️ OBESITY: Calorie score heavily prioritized (40%)');
-    } else if (healthRisks.isOverweight) {
-      weights.calorie = 0.30; // 30% weight
-      totalBoost += 0.05;
-      console.log('⚠️ Overweight: Calorie score prioritized (30%)');
-    }
-
-    // Redistribute remaining weight proportionally
-    if (totalBoost > 0) {
-      const remainingWeight = 1.0 - weights.sugar - weights.fat - weights.calorie;
-      weights.sodium = Math.max(0.10, remainingWeight); // At least 10% for sodium
-      
-      // Normalize to ensure sum = 1.0
-      const sum = weights.sugar + weights.fat + weights.sodium + weights.calorie;
-      weights.sugar /= sum;
-      weights.fat /= sum;
-      weights.sodium /= sum;
-      weights.calorie /= sum;
-    }
-
-    return weights;
-  }
-
-  /**
-   * Score sugar content (0-100)
-   * Stricter scoring for users with high blood sugar/diabetes
-   */
   private scoreSugar(
-    sugars: number | undefined,
-    userProfile: HealthProfile | undefined,
-    healthRisks: ReturnType<typeof this.assessHealthRisks>,
-    warnings: string[],
+    sugars: number | undefined, 
+    fiber: number | undefined,
+    user: User | undefined, 
+    warnings: string[], 
     recommendations: string[]
   ): number {
-    if (!sugars) return 50; // Neutral if no data
+    if (!sugars || sugars === 0) return 100; // Perfect score for zero sugar
 
     let score = 100;
-
-    // Stricter thresholds for diabetic users
-    if (healthRisks.hasDiabetes) {
-      if (sugars > 5) {
-        score = Math.max(0, 100 - ((sugars - 5) / 5) * 80);
-        warnings.push(`🚨 CRITICAL: ${sugars}g sugar - Unsafe for diabetes (Limit: 5g)`);
-        recommendations.push('🩸 Choose sugar-free options - you have diabetes');
-      } else if (sugars > 3) {
-        score = 70;
-        warnings.push(`⚠️ Moderate sugar: ${sugars}g (Limit for diabetes: 5g/serving)`);
+    
+    // Fiber bonus: Reduces effective sugar impact (fiber slows absorption)
+    const effectiveSugar = fiber && fiber > 0 ? Math.max(0, sugars - (fiber * 0.5)) : sugars;
+    
+    if (user?.hasDiabetes) {
+      // Much stricter thresholds for diabetics with fiber consideration
+      if (effectiveSugar >= 30) {
+        score = 0;
+        warnings.push(`🚨 CRITICAL: ${sugars}g sugar - Extremely dangerous for diabetes!`);
+        recommendations.push('🩸 Avoid completely - choose sugar-free alternatives');
+      } else if (effectiveSugar >= 20) {
+        score = Math.max(0, 10 - ((effectiveSugar - 20) * 1));
+        warnings.push(`🚨 CRITICAL: ${sugars}g sugar - Very dangerous for diabetes`);
+        recommendations.push('🩸 Avoid this food - too much sugar');
+      } else if (effectiveSugar >= 10) {
+        score = Math.max(10, 40 - ((effectiveSugar - 10) * 3));
+        warnings.push(`🚨 High sugar for diabetes: ${sugars}g (Limit: 5g)`);
+        recommendations.push('🩸 Choose sugar-free options');
+      } else if (effectiveSugar >= 5) {
+        score = Math.max(40, 70 - ((effectiveSugar - 5) * 6));
+        warnings.push(`⚠️ Moderate sugar: ${sugars}g (Limit: 5g)`);
+      } else if (effectiveSugar >= 2) {
+        score = 80;
+      } else if (effectiveSugar >= 0.5) {
+        score = 90;
+      } else {
+        score = 100;
       }
-      recommendations.push('💡 Monitor blood sugar levels after consuming this product');
-    } else if (healthRisks.hasHighBloodSugar) {
-      if (sugars > 10) {
-        score = Math.max(20, 100 - ((sugars - 10) / 10) * 60);
-        warnings.push(`⚠️ High sugar: ${sugars}g - Risky with elevated blood sugar (Limit: 10g)`);
-        recommendations.push('🩸 Reduce sugar intake - you have pre-diabetes risk');
-      } else if (sugars > 7) {
-        score = 60;
-        warnings.push(`⚠️ Moderate sugar: ${sugars}g`);
+
+      // Fiber bonus message
+      if (fiber && fiber >= 3) {
+        recommendations.push(`✅ Good fiber (${fiber}g) helps slow sugar absorption`);
       }
     } else {
-      // Normal users
-      if (sugars > 20) {
-        score = 20;
+      // Healthy/non-diabetic scoring
+      if (effectiveSugar > 40) {
+        score = 10;
+        warnings.push(`⚠️ Extremely high sugar: ${sugars}g`);
+      } else if (effectiveSugar > 25) {
+        score = 30;
         warnings.push(`⚠️ Very high sugar: ${sugars}g`);
-      } else if (sugars > 12) {
+      } else if (effectiveSugar > 15) {
         score = 50;
         warnings.push(`⚠️ High sugar: ${sugars}g`);
-      } else if (sugars > 5) {
-        score = 80;
+      } else if (effectiveSugar > 8) {
+        score = 75;
+      } else if (effectiveSugar > 3) {
+        score = 90;
+      } else {
+        score = 100;
       }
     }
-
-    if (sugars > 10) {
-      recommendations.push('💡 Look for "no added sugar" or "sugar-free" alternatives');
-    }
-
     return Math.round(score);
   }
 
-  /**
-   * Score fat content (0-100)
-   * Stricter scoring for users with high cholesterol
-   */
   private scoreFat(
-    saturatedFat: number | undefined,
-    transFat: number | undefined,
-    userProfile: HealthProfile | undefined,
-    healthRisks: ReturnType<typeof this.assessHealthRisks>,
-    warnings: string[],
+    totalFat: number | undefined,
+    saturatedFat: number | undefined, 
+    transFat: number | undefined, 
+    user: User | undefined, 
+    warnings: string[], 
     recommendations: string[]
   ): number {
     let score = 100;
 
-    // Trans fat should ALWAYS be 0
+    // Trans fat is always bad (instant penalty)
     if (transFat && transFat > 0) {
-      score -= 30;
-      warnings.push(`⚠️ Contains trans fat: ${transFat}g (Should be 0g)`);
-      recommendations.push('💡 Avoid trans fats - they increase heart disease risk');
-      
-      if (healthRisks.hasHighCholesterol) {
-        warnings.push('🚨 CRITICAL: Trans fat is especially dangerous with high cholesterol!');
+      score -= 40;
+      warnings.push(`🚨 Contains trans fat: ${transFat}g - Very unhealthy!`);
+      recommendations.push('❤️ Avoid foods with trans fats');
+    }
+
+    // Evaluate saturated fat (bad fat)
+    if (saturatedFat) {
+      if (user?.hasHighCholesterol) {
+        // Strict for high cholesterol patients
+        if (saturatedFat > 5) {
+          score -= 60;
+          warnings.push(`🚨 Very high saturated fat: ${saturatedFat}g (Limit: 2g)`);
+          recommendations.push('❤️ Choose low-fat or fat-free options');
+        } else if (saturatedFat > 2) {
+          score -= 40;
+          warnings.push(`⚠️ High saturated fat: ${saturatedFat}g (Limit: 2g)`);
+          recommendations.push('❤️ Reduce saturated fat intake');
+        } else if (saturatedFat > 1) {
+          score -= 20;
+        }
+      } else {
+        // Standard scoring
+        if (saturatedFat > 8) {
+          score -= 50;
+          warnings.push(`⚠️ Very high saturated fat: ${saturatedFat}g`);
+        } else if (saturatedFat > 5) {
+          score -= 30;
+          warnings.push(`⚠️ High saturated fat: ${saturatedFat}g`);
+        } else if (saturatedFat > 3) {
+          score -= 15;
+        }
       }
     }
 
-    // Stricter saturated fat scoring for high cholesterol users
-    if (saturatedFat) {
-      if (healthRisks.hasVeryHighCholesterol) {
-        // Very strict for very high LDL (>160)
-        if (saturatedFat > 1) {
-          score -= 60;
-          warnings.push(`🚨 CRITICAL: ${saturatedFat}g saturated fat - Unsafe with very high LDL (Limit: 1g)`);
-          recommendations.push('❤️ Choose fat-free or very low-fat options - you have very high cholesterol');
-        } else if (saturatedFat > 0.5) {
-          score -= 30;
-          warnings.push(`⚠️ Moderate saturated fat: ${saturatedFat}g (Limit: 1g for high LDL)`);
-        }
-      } else if (healthRisks.hasHighCholesterol) {
-        // Strict for high LDL (130-160)
-        if (saturatedFat > 2) {
-          score -= 50;
-          warnings.push(`🚨 High saturated fat: ${saturatedFat}g - Risky with high LDL (Limit: 2g)`);
-          recommendations.push('❤️ Reduce saturated fat - you have borderline high cholesterol');
-        } else if (saturatedFat > 1) {
-          score -= 25;
-          warnings.push(`⚠️ Moderate saturated fat: ${saturatedFat}g`);
-        }
-      } else {
-        // Normal users
-        if (saturatedFat > 5) {
-          score -= 40;
-          warnings.push(`⚠️ High saturated fat: ${saturatedFat}g`);
-        } else if (saturatedFat > 3) {
-          score -= 20;
-          warnings.push(`⚠️ Moderate saturated fat: ${saturatedFat}g`);
-        }
-      }
-
-      if (saturatedFat > 2 || healthRisks.hasHighCholesterol) {
-        recommendations.push('💡 Choose products with < 1g saturated fat per serving');
+    // Evaluate unsaturated fat (good fat - omega-3, omega-6)
+    // If total fat is high but saturated fat is low, it's likely healthy fats
+    if (totalFat && saturatedFat) {
+      const unsaturatedFat = totalFat - saturatedFat - (transFat || 0);
+      
+      if (unsaturatedFat > 10 && saturatedFat < 3) {
+        // High unsaturated fat, low saturated fat = healthy fats (like salmon, avocado, nuts)
+        score = Math.min(100, score + 10); // Bonus for healthy fats
+        recommendations.push('✅ Contains healthy unsaturated fats (omega-3/omega-6)');
+      } else if (unsaturatedFat > 5 && saturatedFat < 2) {
+        score = Math.min(100, score + 5);
       }
     }
 
     return Math.max(0, Math.round(score));
   }
 
-  /**
-   * Score sodium content (0-100)
-   */
-  private scoreSodium(
-    sodium: number | undefined,
-    healthRisks: ReturnType<typeof this.assessHealthRisks>,
-    warnings: string[],
-    recommendations: string[]
-  ): number {
-    if (!sodium) return 50;
+  private scoreSodium(sodium: number | undefined, user: User | undefined, warnings: string[], recommendations: string[]): number {
+    if (!sodium) return 75;
 
     let score = 100;
-    const lowSodiumLimit = 140;
-    const moderateLimit = 400;
-    const highLimit = 600;
-
-    if (sodium > highLimit) {
-      score = 0;
-      warnings.push(`⚠️ Very high sodium: ${sodium}mg`);
-    } else if (sodium > moderateLimit) {
-      score = 40;
-      warnings.push(`⚠️ High sodium: ${sodium}mg`);
-    } else if (sodium > lowSodiumLimit) {
-      score = 70;
-      warnings.push(`⚠️ Moderate sodium: ${sodium}mg`);
+    if (user?.hasHighBloodPressure) {
+      if (sodium > 300) {
+        score = Math.max(0, 100 - ((sodium - 300) / 10));
+        warnings.push(`🚨 High sodium: ${sodium}mg`);
+        recommendations.push('💓 Choose low sodium options');
+      } else if (sodium > 200) {
+        score = 70;
+      } else {
+        score = 95;
+      }
+    } else {
+      if (sodium > 600) {
+        score = 20;
+        warnings.push(`⚠️ Very high sodium: ${sodium}mg`);
+      } else if (sodium > 400) {
+        score = 50;
+      } else if (sodium > 200) {
+        score = 75;
+      } else {
+        score = 95;
+      }
     }
-
-    if (sodium > lowSodiumLimit) {
-      recommendations.push('💡 Look for "low sodium" (< 140mg) or "no salt added" options');
-    }
-
     return Math.round(score);
   }
 
-  /**
-   * Score calorie content (0-100)
-   * Stricter scoring for overweight/obese users
-   */
-  private scoreCalories(
-    calories: number | undefined,
-    userProfile: HealthProfile | undefined,
-    healthRisks: ReturnType<typeof this.assessHealthRisks>,
-    warnings: string[],
-    recommendations: string[]
-  ): number {
-    if (!calories) return 50;
+  private scoreCalories(calories: number | undefined, user: User | undefined, warnings: string[], recommendations: string[]): number {
+    if (!calories) return 75;
 
     let score = 100;
+    const bmiCategory = user?.bmiCategory;
 
-    // Stricter calorie limits for obese users
-    if (healthRisks.isObese) {
-      if (calories > 300) {
-        score = Math.max(20, 100 - ((calories - 300) / 300) * 60);
-        warnings.push(`⚠️ High calories: ${calories} cal - Risky for weight management (Limit: 300 cal)`);
-        recommendations.push(`⚖️ Focus on low-calorie options - your BMI is ${healthRisks.bmi} (obese range)`);
-      } else if (calories > 200) {
-        score = 60;
-        warnings.push(`⚠️ Moderate calories: ${calories} cal`);
-      }
-      recommendations.push('💡 Consider portion sizes and calorie density');
-    } else if (healthRisks.isOverweight) {
-      if (calories > 400) {
-        score = Math.max(30, 100 - ((calories - 400) / 400) * 50);
-        warnings.push(`⚠️ High calories: ${calories} cal (Limit for weight control: 400 cal)`);
-        recommendations.push(`⚖️ Watch portion sizes - your BMI is ${healthRisks.bmi} (overweight)`);
-      } else if (calories > 300) {
+    if (bmiCategory === 'Obese') {
+      if (calories > 250) {
+        score = Math.max(0, 100 - ((calories - 250) / 5));
+        warnings.push(`🚨 High calories: ${calories} cal`);
+        recommendations.push(`⚖️ Low-calorie options recommended (BMI: ${user?.bmi})`);
+      } else if (calories > 150) {
         score = 70;
+      } else {
+        score = 95;
+      }
+    } else if (bmiCategory === 'Overweight') {
+      if (calories > 350) {
+        score = Math.max(20, 100 - ((calories - 350) / 8));
+        warnings.push(`⚠️ High calories: ${calories} cal`);
+      } else if (calories > 250) {
+        score = 70;
+      } else {
+        score = 95;
+      }
+    } else if (bmiCategory === 'Underweight') {
+      if (calories > 600) {
+        score = 100;
+        recommendations.push(`⚖️ High-calorie foods are beneficial (BMI: ${user?.bmi})`);
+      } else if (calories > 400) {
+        score = 95;
+      } else {
+        score = 80;
       }
     } else {
-      // Normal users
       if (calories > 600) {
-        score = Math.max(20, 100 - ((calories - 600) / 600) * 60);
+        score = 30;
         warnings.push(`⚠️ Very high calories: ${calories} cal`);
       } else if (calories > 400) {
         score = 60;
-        warnings.push(`⚠️ High calories: ${calories} cal`);
-      } else if (calories > 300) {
+      } else if (calories > 250) {
         score = 80;
+      } else {
+        score = 95;
       }
     }
-
-    if (calories > 400 || healthRisks.isOverweight) {
-      recommendations.push('💡 Consider portion control or lower-calorie alternatives');
-    }
-
     return Math.round(score);
   }
 
-  /**
-   * Get category based on overall score
-   */
   private getCategory(score: number): HealthScore['category'] {
     if (score >= 80) return 'Excellent';
     if (score >= 60) return 'Good';
     if (score >= 40) return 'Fair';
     if (score >= 20) return 'Poor';
     return 'Very Poor';
+  }
+
+  /**
+   * Calculate glycemic impact penalty for high-carb refined foods
+   * This penalizes foods with high carbs but low fiber (refined/processed carbs)
+   * Especially important for diabetics (pasta, white rice, french fries, bagels)
+   */
+  private calculateGlycemicPenalty(
+    totalCarbs: number | undefined,
+    fiber: number | undefined,
+    sugars: number | undefined,
+    user: User | undefined,
+    warnings: string[],
+    recommendations: string[]
+  ): number {
+    if (!user?.hasDiabetes || !totalCarbs) return 0;
+
+    // Calculate net carbs (total carbs - fiber)
+    const netCarbs = fiber ? totalCarbs - fiber : totalCarbs;
+    
+    // Calculate non-sugar carbs (starch, refined flour, etc.)
+    const starchCarbs = sugars ? netCarbs - sugars : netCarbs;
+
+    // If high starch carbs with low fiber = refined carbs = glycemic spike
+    if (starchCarbs > 20 && (!fiber || fiber < 3)) {
+      // High refined carbs (pasta, white rice, french fries, bagels)
+      const penalty = Math.min(30, Math.round(starchCarbs * 0.8)); // Up to -30 points
+      warnings.push(`⚠️ High refined carbs: ${Math.round(starchCarbs)}g (Low fiber: ${fiber || 0}g)`);
+      recommendations.push('🩸 Choose whole grain or low-carb alternatives');
+      return penalty;
+    } else if (starchCarbs > 15 && (!fiber || fiber < 2)) {
+      // Moderate refined carbs
+      const penalty = Math.min(20, Math.round(starchCarbs * 0.6));
+      warnings.push(`⚠️ Moderate refined carbs: ${Math.round(starchCarbs)}g`);
+      return penalty;
+    } else if (starchCarbs > 30 && fiber && fiber >= 5) {
+      // High carbs but also high fiber (whole grains, legumes) - smaller penalty
+      const penalty = Math.min(10, Math.round(starchCarbs * 0.2));
+      recommendations.push(`ℹ️ High carbs (${Math.round(starchCarbs)}g) but good fiber (${fiber}g)`);
+      return penalty;
+    }
+
+    return 0;
   }
 }
 

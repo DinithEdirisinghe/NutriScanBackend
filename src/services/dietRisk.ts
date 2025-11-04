@@ -118,7 +118,7 @@ export const defaultConfig: ModelConfig = {
   nutrientBounds: {
     calories: { low: 0, high: 600 },     // per 100g (very dense foods ~600 kcal/100g)
     sugar: { low: 0, high: 15 },         // per 100g/ml (LOWERED: Coke has ~10.6g/100ml, realistic max ~15g)
-    sfa: { low: 0, high: 50 },           // per 100g (butter = ~50g/100g)
+    sfa: { low: 0, high: 60 },           // per 100g (butter = ~50g/100g, raised to reduce over-penalization)
     transFat: { low: 0, high: 10 },      // per 100g
     unsatFat: { low: 0, high: 50 },      // per 100g (oils = ~100g/100g)
     sodium: { low: 0, high: 5000 },      // per 100g (salt = ~38,000mg/100g)
@@ -130,20 +130,20 @@ export const defaultConfig: ModelConfig = {
   
   nutrientMarkerMapping: {
     sugar: {
-      glucose: 8.0,     // EXTREMELY high penalty for diabetic/pre-diabetic users
-      hba1c: 6.0,       // Very high penalty for long-term blood sugar impact
-      triglycerides: 2.5, // Increased penalty
-      bmi: 2.0,         // Increased penalty
-      waist: 2.0,       // Increased penalty
-      ldl: 1.5,         // Sugar also affects LDL (via triglycerides)
-      crp: 1.0,         // Sugar causes inflammation
+      glucose: 6.0,     // High penalty for diabetic/pre-diabetic users (reduced from 8.0)
+      hba1c: 4.0,       // High penalty for long-term blood sugar impact (reduced from 6.0)
+      triglycerides: 2.0, // Moderate penalty (reduced from 2.5)
+      bmi: 1.5,         // Moderate penalty (reduced from 2.0)
+      waist: 1.5,       // Moderate penalty (reduced from 2.0)
+      ldl: 1.0,         // Sugar affects LDL (via triglycerides) (reduced from 1.5)
+      crp: 0.8,         // Sugar causes inflammation (reduced from 1.0)
     },
     sfa: {
-      ldl: 5.0,       // EXTREMELY high penalty for high cholesterol users
+      ldl: 2.0,       // Moderate-high penalty for high cholesterol users (reduced from 2.5 to prevent over-penalization)
       hdl: -0.4,      // beneficial effect (negative = lowers risk)
-      crp: 1.5,       // Increased inflammation penalty
-      bmi: 1.5,       // Increased penalty
-      waist: 1.5,     // Increased penalty
+      crp: 1.0,       // Moderate inflammation penalty (reduced from 1.2)
+      bmi: 0.8,       // Moderate penalty (reduced from 1.0)
+      waist: 0.8,     // Moderate penalty (reduced from 1.0)
     },
     transFat: {
       ldl: 1.2,
@@ -258,14 +258,14 @@ function normalizeNutrientsPer100g(food: FoodNutrients): FoodNutrients {
  * Calculate serving size risk multiplier
  * 
  * Small serving sizes often indicate concentrated/processed foods that should
- * carry higher risk. This multiplier amplifies the risk for very small servings.
+ * carry slightly higher risk. This multiplier gently amplifies the risk for very small servings.
  * 
  * Examples:
- * - 10g serving → 1.6× risk multiplier (very concentrated, like candy)
- * - 20g serving → 1.4× risk multiplier (concentrated, like chips)
- * - 50g serving → 1.2× risk multiplier (moderately concentrated)
+ * - 10g serving → 1.15× risk multiplier (very concentrated, like candy)
+ * - 20g serving → 1.10× risk multiplier (concentrated, like chips)
+ * - 50g serving → 1.04× risk multiplier (moderately concentrated)
  * - 100g serving → 1.0× baseline (standard comparison)
- * - 200g serving → 0.9× risk multiplier (dilute, like soup)
+ * - 200g serving → 0.95× risk multiplier (dilute, like soup)
  * 
  * @param servingSize - Serving size in grams
  * @returns Risk multiplier (1.0 = baseline for 100g)
@@ -274,13 +274,13 @@ function calculateServingSizeRiskMultiplier(servingSize: number): number {
   const baseSize = 100; // Reference serving size
   
   if (servingSize >= baseSize) {
-    // Large servings get slight reduction (0.9× minimum)
-    return Math.max(0.9, 1 - (servingSize - baseSize) / 1000);
+    // Large servings get slight reduction (0.95× minimum)
+    return Math.max(0.95, 1 - (servingSize - baseSize) / 2000);
   } else {
-    // Small servings get amplified risk
-    // 10g → 1.6×, 20g → 1.4×, 50g → 1.2×, 100g → 1.0×
+    // Small servings get gently amplified risk (reduced from 0.6 to 0.15)
+    // 10g → 1.15×, 20g → 1.10×, 50g → 1.04×, 100g → 1.0×
     const ratio = servingSize / baseSize;
-    return 1 + (1 - ratio) * 0.6; // Up to 60% increase for very small servings
+    return 1 + (1 - ratio) * 0.15; // Up to 15% increase for very small servings (was 60%)
   }
 }
 
@@ -404,25 +404,39 @@ export function computeFoodSuitability(
   const isFiberZero = normalizedFood.fiber !== undefined && normalizedFood.fiber === 0;
   const hasCalories = normalizedFood.calories !== undefined && normalizedFood.calories > 0;
   
+  // Penalty 1: Nutritionally empty (protein=0 AND fiber=0)
   if (isProteinZero && isFiberZero && hasCalories) {
-    // Nutritionally empty food with calories - apply 40% penalty (multiply score by 0.6)
+    // Nutritionally empty food with calories - apply 25% penalty (multiply score by 0.75)
     // Examples: soda, candy, sugar water
     const originalScore = score;
-    score = score * 0.6;
+    score = score * 0.75;
     console.warn(`⚠️ NUTRITIONAL EMPTINESS PENALTY: protein=0, fiber=0, ${normalizedFood.calories}cal`);
     console.log(`   Score before penalty: ${(originalScore * 100).toFixed(0)}/100`);
-    console.log(`   Score after 40% penalty: ${(score * 100).toFixed(0)}/100`);
+    console.log(`   Score after 25% penalty: ${(score * 100).toFixed(0)}/100`);
   } else if (isProteinZero && isFiberZero && !hasCalories) {
     // Zero-calorie beverage (water, tea, diet soda) - NO PENALTY
     console.log(`✅ ZERO-CALORIE BEVERAGE: No nutritional emptiness penalty`);
   } else if (!hasProtein && !hasFiber) {
-    // Both missing from label (unknown) - smaller penalty (20%)
+    // Both missing from label (unknown) - smaller penalty (15%)
     const originalScore = score;
-    score = score * 0.8;
+    score = score * 0.85;
     console.warn(`⚠️ MISSING NUTRITION DATA PENALTY: protein AND fiber not on label`);
     console.log(`   Score before penalty: ${(originalScore * 100).toFixed(0)}/100`);
-    console.log(`   Score after 20% penalty: ${(score * 100).toFixed(0)}/100`);
+    console.log(`   Score after 15% penalty: ${(score * 100).toFixed(0)}/100`);
   }
+  
+  // Penalty 2: Lack of fiber (fiber=0 or missing) - DISABLED
+  // This penalty was making scores too harsh
+  // Fiber benefits are already captured in the positive fiber coefficient
+  /*
+  if ((isFiberZero || !hasFiber) && hasCalories && (normalizedFood.calories || 0) > 20) {
+    const originalScore = score;
+    score = score * 0.9;
+    console.warn(`⚠️ LACK OF FIBER PENALTY: fiber=0 or missing`);
+    console.log(`   Score before penalty: ${(originalScore * 100).toFixed(0)}/100`);
+    console.log(`   Score after 10% penalty: ${(score * 100).toFixed(0)}/100`);
+  }
+  */
   
   console.log('📊 RISK CALCULATION:');
   console.log(`   Scoring mode: ${scoringMode}`);

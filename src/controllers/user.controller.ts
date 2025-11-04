@@ -26,32 +26,16 @@ export const getProfile = async (
     res.status(200).json({
       id: user.id,
       email: user.email,
-      // Blood sugar & diabetes
-      glucose: user.glucose,
-      hba1c: user.hba1c,
-      // Cholesterol & heart health
-      ldl: user.ldl,
-      hdl: user.hdl,
-      triglycerides: user.triglycerides,
-      // Blood pressure
-      systolic: user.systolic,
-      diastolic: user.diastolic,
+      // Health conditions
+      hasDiabetes: user.hasDiabetes,
+      hasHighCholesterol: user.hasHighCholesterol,
+      hasHighBloodPressure: user.hasHighBloodPressure,
       // Body metrics
       weight: user.weight,
       height: user.height,
-      waist: user.waist,
       bmi: user.bmi,
-      age: user.age,
-      // Liver function
-      alt: user.alt,
-      ast: user.ast,
-      ggt: user.ggt,
-      // Kidney & inflammation
-      creatinine: user.creatinine,
-      crp: user.crp,
-      uric_acid: user.uric_acid,
-      // Scoring preferences
-      scoringMode: user.scoringMode,
+      bmiCategory: user.bmiCategory,
+      isHealthy: user.isHealthy,
     });
   } catch (error) {
     console.error('Get profile error:', error);
@@ -69,32 +53,13 @@ export const updateProfile = async (
 ): Promise<void> => {
   try {
     const {
-      // Blood sugar & diabetes
-      glucose,
-      hba1c,
-      // Cholesterol & heart health
-      ldl,
-      hdl,
-      triglycerides,
-      // Blood pressure
-      systolic,
-      diastolic,
+      // Health conditions
+      hasDiabetes,
+      hasHighCholesterol,
+      hasHighBloodPressure,
       // Body metrics
       weight,
       height,
-      waist,
-      bmi,
-      age,
-      // Liver function
-      alt,
-      ast,
-      ggt,
-      // Kidney & inflammation
-      creatinine,
-      crp,
-      uric_acid,
-      // Scoring preferences
-      scoringMode,
     } = req.body;
 
     const user = await userRepository.findOne({
@@ -107,37 +72,11 @@ export const updateProfile = async (
     }
 
     // Update only provided fields
-    // Blood sugar & diabetes
-    if (glucose !== undefined) user.glucose = glucose;
-    if (hba1c !== undefined) user.hba1c = hba1c;
-    // Cholesterol & heart health
-    if (ldl !== undefined) user.ldl = ldl;
-    if (hdl !== undefined) user.hdl = hdl;
-    if (triglycerides !== undefined) user.triglycerides = triglycerides;
-    // Blood pressure
-    if (systolic !== undefined) user.systolic = systolic;
-    if (diastolic !== undefined) user.diastolic = diastolic;
-    // Body metrics
+    if (hasDiabetes !== undefined) user.hasDiabetes = hasDiabetes;
+    if (hasHighCholesterol !== undefined) user.hasHighCholesterol = hasHighCholesterol;
+    if (hasHighBloodPressure !== undefined) user.hasHighBloodPressure = hasHighBloodPressure;
     if (weight !== undefined) user.weight = weight;
     if (height !== undefined) user.height = height;
-    if (waist !== undefined) user.waist = waist;
-    if (bmi !== undefined) user.bmi = bmi;
-    if (age !== undefined) user.age = age;
-    // Liver function
-    if (alt !== undefined) user.alt = alt;
-    if (ast !== undefined) user.ast = ast;
-    if (ggt !== undefined) user.ggt = ggt;
-    // Kidney & inflammation
-    if (creatinine !== undefined) user.creatinine = creatinine;
-    if (crp !== undefined) user.crp = crp;
-    if (uric_acid !== undefined) user.uric_acid = uric_acid;
-    // Scoring preferences
-    if (scoringMode !== undefined) {
-      // Validate scoring mode
-      if (scoringMode === 'portion-aware' || scoringMode === 'per-100g') {
-        user.scoringMode = scoringMode;
-      }
-    }
 
     await userRepository.save(user);
 
@@ -146,32 +85,14 @@ export const updateProfile = async (
       user: {
         id: user.id,
         email: user.email,
-        // Blood sugar & diabetes
-        glucose: user.glucose,
-        hba1c: user.hba1c,
-        // Cholesterol & heart health
-        ldl: user.ldl,
-        hdl: user.hdl,
-        triglycerides: user.triglycerides,
-        // Blood pressure
-        systolic: user.systolic,
-        diastolic: user.diastolic,
-        // Body metrics
+        hasDiabetes: user.hasDiabetes,
+        hasHighCholesterol: user.hasHighCholesterol,
+        hasHighBloodPressure: user.hasHighBloodPressure,
         weight: user.weight,
         height: user.height,
-        waist: user.waist,
         bmi: user.bmi,
-        age: user.age,
-        // Liver function
-        alt: user.alt,
-        ast: user.ast,
-        ggt: user.ggt,
-        // Kidney & inflammation
-        creatinine: user.creatinine,
-        crp: user.crp,
-        uric_acid: user.uric_acid,
-        // Scoring preferences
-        scoringMode: user.scoringMode,
+        bmiCategory: user.bmiCategory,
+        isHealthy: user.isHealthy,
       },
     });
   } catch (error) {

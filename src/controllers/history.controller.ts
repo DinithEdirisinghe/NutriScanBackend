@@ -66,6 +66,44 @@ class HistoryController {
 
       console.log(`📄 Retrieved scan details: ${scan.id}`);
 
+      // Transform old healthScore format to enhanced format for compatibility
+      let healthScore: any = scan.healthScore;
+      
+      // Check if this is an old format (has sugarScore but no breakdown)
+      if (healthScore.sugarScore !== undefined && !healthScore.breakdown) {
+        console.log('🔄 Converting old score format to enhanced format');
+        healthScore = {
+          overallScore: healthScore.overallScore || 0,
+          breakdown: {
+            sugarScore: healthScore.sugarScore || 0,
+            fatScore: healthScore.fatScore || 0,
+            sodiumScore: healthScore.sodiumScore || 0,
+            calorieScore: healthScore.calorieScore || 0,
+            qualityScore: 70, // Default for old scans
+          },
+          adjustments: {
+            sugarTypeBonus: 0,
+            fatTypeBonus: 0,
+            processingPenalty: 0,
+            glycemicPenalty: 0,
+            cookingPenalty: 0,
+          },
+          recommendations: [],
+          aiInsights: [],
+          warnings: [],
+          category: 'Good', // Default category based on score
+        };
+      }
+
+      // Format AI advice for frontend (matching scan controller structure)
+      const aiAdvice = {
+        explanation: (healthScore.aiInsights || []).join(' '),
+        healthyAlternatives: healthScore.recommendations || [],
+        detailedAdvice: healthScore.warnings.length > 0 
+          ? `Health concerns: ${healthScore.warnings.join(', ')}`
+          : 'No major health concerns detected.',
+      };
+
       res.json({
         success: true,
         scan: {
@@ -73,7 +111,8 @@ class HistoryController {
           scanType: scan.scanType,
           foodName: scan.foodName,
           nutritionData: scan.nutritionData,
-          healthScore: scan.healthScore,
+          healthScore: healthScore,
+          aiAdvice: aiAdvice, // Add AI advice object
           confidenceLevel: scan.confidenceLevel,
           createdAt: scan.createdAt,
           image: scan.image, // Full base64 image

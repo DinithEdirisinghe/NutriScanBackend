@@ -1,33 +1,51 @@
 import { Request, Response } from 'express';
-import ocrService from '../services/ocr.service';
-import advancedScoringService from '../services/advancedScoring.service';
-import aiAdviceService from '../services/ai-advice.service';
-import foodRecognitionService from '../services/food-recognition.service';
+import enhancedAIService from '../services/enhanced-ai.service';
+import enhancedScoringService from '../services/enhanced-scoring.service';
 import { AppDataSource } from '../config/database';
 import { User } from '../entities/User.entity';
 import { Scan } from '../entities/Scan.entity';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { normalizeNutrients } from '../utils/serving-size.util';
 import fs from 'fs';
 
 export class ScanController {
   /**
-   * POST /api/scan/analyze
-   * Analyze nutrition label from uploaded image
+   * POST /api/scan/enhanced
+   * Enhanced multi-image analysis with AI context (up to 3 images)
+   * Uses hybrid AI + formula approach for maximum accuracy
    */
-  async analyzeLLabel(req: AuthRequest, res: Response) {
+  async analyzeEnhanced(req: AuthRequest, res: Response) {
+    const uploadedFiles: string[] = [];
+    
     try {
-      // Check if file was uploaded
-      if (!req.file) {
-        return res.status(400).json({ error: 'No image file provided' });
+      // Check if files were uploaded (support single or multiple)
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'No image files provided. Please upload 1-3 images.' });
       }
 
-      const imagePath = req.file.path;
-      console.log('📸 Received image for analysis:', imagePath);
+      if (files.length > 3) {
+        // Clean up all files
+        files.forEach(file => fs.existsSync(file.path) && fs.unlinkSync(file.path));
+        return res.status(400).json({ error: 'Maximum 3 images allowed' });
+      }
 
-      // Extract text and parse nutrition data using OCR
-      const nutritionData = await ocrService.processNutritionLabel(imagePath);
+      console.log(`🔍 Received ${files.length} image(s) for enhanced analysis`);
 
-      // Get user entity for personalized scoring
+      // Convert all images to base64
+      const images = files.map(file => {
+        uploadedFiles.push(file.path);
+        const buffer = fs.readFileSync(file.path);
+        return {
+          base64: buffer.toString('base64'),
+          mimeType: file.mimetype,
+        };
+      });
+
+      // Use enhanced AI to analyze all images with context
+      const enhancedData = await enhancedAIService.analyzeFood(images);
+
+      // Get user for personalized scoring
       let user: User | undefined;
       if (req.user?.userId) {
         const userRepository = AppDataSource.getRepository(User);
@@ -35,202 +53,313 @@ export class ScanController {
         if (foundUser) user = foundUser;
       }
 
-      // Calculate health score using advanced scoring (uses all 18 health markers)
-      const healthScore = advancedScoringService.calculateAdvancedScore(nutritionData, user);
-
-      // Generate AI health advice (convert User to UserProfile for compatibility)
-      console.log('🤖 Generating AI health advice...');
-      const userProfile = user ? {
-        bloodSugarMgDl: user.glucose,
-        ldlCholesterolMgDl: user.ldl,
-        weightKg: user.weight,
-        heightCm: user.height,
-      } : undefined;
-      
-      const aiAdvice = await aiAdviceService.generateHealthAdvice(
-        nutritionData,
-        healthScore,
-        userProfile
-      );
+      // Calculate enhanced score using AI context + formula
+      const enhancedScore = enhancedScoringService.calculateEnhancedScore(enhancedData, user);
 
       // Save to scan history
       if (req.user?.userId) {
         try {
           const scanRepository = AppDataSource.getRepository(Scan);
-          const imageBuffer = fs.readFileSync(imagePath);
-          const imageBase64 = imageBuffer.toString('base64');
+          const imageBase64 = images[0].base64; // Save first image
           
           const newScan = scanRepository.create({
-            userId: req.user.userId,
-            scanType: 'label',
+            user: { id: req.user.userId } as User,
+            scanType: 'enhanced',
+            foodName: enhancedData.foodContext.foodName,
+            confidenceLevel: enhancedData.foodContext.confidence,
             image: imageBase64,
-            nutritionData,
-            healthScore,
+            nutritionData: {
+              calories: enhancedData.calories || 0,
+              totalFat: enhancedData.totalFat || 0,
+              saturatedFat: enhancedData.saturatedFat || 0,
+              transFat: enhancedData.transFat || 0,
+              cholesterol: enhancedData.cholesterol || 0,
+              sodium: enhancedData.sodium || 0,
+              totalCarbs: enhancedData.totalCarbohydrates || 0,
+              fiber: enhancedData.dietaryFiber || 0,
+              sugars: enhancedData.sugars || 0,
+              protein: enhancedData.protein || 0,
+              servingSize: enhancedData.servingSize,
+            },
+            healthScore: {
+              // Save the complete enhanced score with all fields
+              overallScore: enhancedScore.overallScore,
+              breakdown: enhancedScore.breakdown,
+              adjustments: enhancedScore.adjustments,
+              recommendations: enhancedScore.recommendations,
+              aiInsights: enhancedScore.aiInsights,
+              warnings: enhancedScore.warnings,
+              category: enhancedScore.category,
+            },
           });
           
           await scanRepository.save(newScan);
-          console.log('💾 Saved nutrition label scan to history');
+          console.log(`💾 Saved enhanced scan: ${enhancedData.foodContext.foodName}`);
+          
+          // Log all extracted values for manual verification
+          console.log('\n📋 === EXTRACTED VALUES FOR FORMULA ===');
+          console.log('🍽️  Serving Size:', enhancedData.servingSize || 'Not provided');
+          console.log('🔥 Calories:', enhancedData.calories || 'Not provided');
+          console.log('🥑 Total Fat:', enhancedData.totalFat || 'Not provided', 'g');
+          console.log('🧈 Saturated Fat:', enhancedData.saturatedFat || 'Not provided', 'g');
+          console.log('⚠️  Trans Fat:', enhancedData.transFat || 'Not provided', 'g');
+          console.log('🍳 Cholesterol:', enhancedData.cholesterol || 'Not provided', 'mg');
+          console.log('🧂 Sodium:', enhancedData.sodium || 'Not provided', 'mg');
+          console.log('🍞 Total Carbs:', enhancedData.totalCarbohydrates || 'Not provided', 'g');
+          console.log('🌾 Dietary Fiber:', enhancedData.dietaryFiber || 'Not provided', 'g');
+          console.log('🍬 Sugars:', enhancedData.sugars || 'Not provided', 'g');
+          console.log('💪 Protein:', enhancedData.protein || 'Not provided', 'g');
+          console.log('\n🎯 === FOOD CONTEXT (AI Analysis) ===');
+          console.log('📛 Food Name:', enhancedData.foodContext.foodName);
+          console.log('✅ Confidence:', enhancedData.foodContext.confidence);
+          console.log('🏷️  Category:', enhancedData.foodContext.category);
+          console.log('⚙️  Processing Level:', enhancedData.foodContext.processingLevel);
+          console.log('🍳 Cooking Method:', enhancedData.foodContext.cookingMethod || 'Not specified');
+          console.log('🍭 Sugar Type:', enhancedData.foodContext.sugarType);
+          console.log('🥑 Fat Type:', enhancedData.foodContext.fatType);
+          console.log('🌾 Carb Type:', enhancedData.foodContext.carbType);
+          console.log('📈 Glycemic Impact:', enhancedData.foodContext.glycemicImpact);
+          console.log('⭐ Overall Quality:', enhancedData.foodContext.overallQuality);
+          console.log('\n🎯 === FINAL SCORES ===');
+          console.log('🏆 Overall Score:', enhancedScore.overallScore, '/100');
+          console.log('🍬 Sugar Score:', enhancedScore.breakdown.sugarScore, '/100');
+          console.log('🥑 Fat Score:', enhancedScore.breakdown.fatScore, '/100');
+          console.log('🧂 Sodium Score:', enhancedScore.breakdown.sodiumScore, '/100');
+          console.log('🔥 Calorie Score:', enhancedScore.breakdown.calorieScore, '/100');
+          console.log('📊 Category:', enhancedScore.category);
+          console.log('=======================================\n');
+
+          // ========== COMPREHENSIVE SCORE BREAKDOWN ==========
+          console.log('\n╔════════════════════════════════════════════════════════════════╗');
+          console.log('║           📊 DETAILED SCORE CALCULATION BREAKDOWN              ║');
+          console.log('╚════════════════════════════════════════════════════════════════╝\n');
+
+          // Get normalized values (per 100g/100ml)
+          const normalized = normalizeNutrients(
+            {
+              calories: enhancedData.calories,
+              totalFat: enhancedData.totalFat,
+              saturatedFat: enhancedData.saturatedFat,
+              transFat: enhancedData.transFat,
+              cholesterol: enhancedData.cholesterol,
+              sodium: enhancedData.sodium,
+              totalCarbs: enhancedData.totalCarbohydrates,
+              fiber: enhancedData.dietaryFiber,
+              sugars: enhancedData.sugars,
+              protein: enhancedData.protein,
+            },
+            enhancedData.servingSize
+          );
+
+          // Section 1: Normalized Values
+          console.log('┌─────────────────────────────────────────────────────────────┐');
+          console.log('│  📏 NORMALIZED VALUES (PER 100G/100ML)                       │');
+          console.log('│  These are the standardized values used in calculations     │');
+          console.log('└─────────────────────────────────────────────────────────────┘');
+          console.log('  🔥 Calories:       ', normalized.calories?.toFixed(1) || '0.0', 'kcal');
+          console.log('  🥑 Total Fat:      ', normalized.totalFat?.toFixed(2) || '0.00', 'g');
+          console.log('  🧈 Saturated Fat:  ', normalized.saturatedFat?.toFixed(2) || '0.00', 'g');
+          console.log('  ⚠️  Trans Fat:      ', normalized.transFat?.toFixed(2) || '0.00', 'g');
+          console.log('  🧂 Sodium:         ', normalized.sodium?.toFixed(2) || '0.00', 'mg');
+          console.log('  🍬 Sugars:         ', normalized.sugars?.toFixed(2) || '0.00', 'g');
+          console.log('  🍞 Total Carbs:    ', normalized.totalCarbs?.toFixed(2) || '0.00', 'g');
+          console.log('  🌾 Fiber:          ', normalized.fiber?.toFixed(2) || '0.00', 'g');
+          console.log('  💪 Protein:        ', normalized.protein?.toFixed(2) || '0.00', 'g\n');
+
+          // Section 2: Component Scores
+          console.log('┌─────────────────────────────────────────────────────────────┐');
+          console.log('│  🎯 COMPONENT SCORES (0-100)                                 │');
+          console.log('│  Individual scores for each nutritional aspect              │');
+          console.log('└─────────────────────────────────────────────────────────────┘');
+          
+          const scores = enhancedScore.breakdown;
+          const formatScore = (score: number, label: string, emoji: string) => {
+            const bar = '█'.repeat(Math.floor(score / 5));
+            const empty = '░'.repeat(20 - Math.floor(score / 5));
+            const rating = score >= 80 ? 'Excellent' : score >= 60 ? 'Good' : score >= 40 ? 'Fair' : score >= 20 ? 'Poor' : 'Very Poor';
+            console.log(`  ${emoji} ${label.padEnd(15)} ${String(score).padStart(3)}/100 │${bar}${empty}│ ${rating}`);
+          };
+
+          formatScore(scores.sugarScore, 'Sugar', '🍬');
+          formatScore(scores.fatScore, 'Fat', '🥑');
+          formatScore(scores.sodiumScore, 'Sodium', '🧂');
+          formatScore(scores.calorieScore, 'Calorie', '🔥');
+          formatScore(scores.qualityScore, 'Quality', '⭐');
+          console.log('');
+
+          // Section 3: Weighted Calculation
+          console.log('┌─────────────────────────────────────────────────────────────┐');
+          console.log('│  ⚖️  WEIGHTED CALCULATION                                     │');
+          console.log('│  Each component is weighted based on health conditions      │');
+          console.log('└─────────────────────────────────────────────────────────────┘');
+
+          // Calculate weights (same logic as in scoring service)
+          let weights = { sugar: 0.20, fat: 0.20, sodium: 0.20, calorie: 0.20, quality: 0.20 };
+          if (user && !user.isHealthy) {
+            if (user.hasDiabetes) {
+              weights.sugar = 0.65;
+              weights.quality = 0.15;
+              const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+              weights = {
+                sugar: weights.sugar / sum,
+                fat: weights.fat / sum,
+                sodium: weights.sodium / sum,
+                calorie: weights.calorie / sum,
+                quality: weights.quality / sum,
+              };
+            }
+            if (user.hasHighCholesterol) {
+              weights.fat = 0.50;
+              const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+              weights = {
+                sugar: weights.sugar / sum,
+                fat: weights.fat / sum,
+                sodium: weights.sodium / sum,
+                calorie: weights.calorie / sum,
+                quality: weights.quality / sum,
+              };
+            }
+            if (user.hasHighBloodPressure) {
+              weights.sodium = 0.50;
+              const sum = Object.values(weights).reduce((a, b) => a + b, 0);
+              weights = {
+                sugar: weights.sugar / sum,
+                fat: weights.fat / sum,
+                sodium: weights.sodium / sum,
+                calorie: weights.calorie / sum,
+                quality: weights.quality / sum,
+              };
+            }
+          }
+
+          const weightedScores = {
+            sugar: scores.sugarScore * weights.sugar,
+            fat: scores.fatScore * weights.fat,
+            sodium: scores.sodiumScore * weights.sodium,
+            calorie: scores.calorieScore * weights.calorie,
+            quality: scores.qualityScore * weights.quality,
+          };
+
+          console.log(`  🍬 Sugar:    ${scores.sugarScore.toString().padStart(3)}/100 × ${(weights.sugar * 100).toFixed(0).padStart(2)}% = ${weightedScores.sugar.toFixed(1).padStart(5)}`);
+          console.log(`  🥑 Fat:      ${scores.fatScore.toString().padStart(3)}/100 × ${(weights.fat * 100).toFixed(0).padStart(2)}% = ${weightedScores.fat.toFixed(1).padStart(5)}`);
+          console.log(`  🧂 Sodium:   ${scores.sodiumScore.toString().padStart(3)}/100 × ${(weights.sodium * 100).toFixed(0).padStart(2)}% = ${weightedScores.sodium.toFixed(1).padStart(5)}`);
+          console.log(`  🔥 Calorie:  ${scores.calorieScore.toString().padStart(3)}/100 × ${(weights.calorie * 100).toFixed(0).padStart(2)}% = ${weightedScores.calorie.toFixed(1).padStart(5)}`);
+          console.log(`  ⭐ Quality:  ${scores.qualityScore.toString().padStart(3)}/100 × ${(weights.quality * 100).toFixed(0).padStart(2)}% = ${weightedScores.quality.toFixed(1).padStart(5)}`);
+          console.log('  ─────────────────────────────────────────────────');
+          const subtotal = Object.values(weightedScores).reduce((a, b) => a + b, 0);
+          console.log(`  📊 Subtotal:                          ${subtotal.toFixed(1).padStart(5)}/100\n`);
+
+          // Section 4: Adjustments & Penalties
+          console.log('┌─────────────────────────────────────────────────────────────┐');
+          console.log('│  ⚠️  ADJUSTMENTS & PENALTIES                                  │');
+          console.log('│  Additional bonuses and penalties applied                   │');
+          console.log('└─────────────────────────────────────────────────────────────┘');
+
+          const adj = enhancedScore.adjustments;
+          let totalAdjustments = 0;
+
+          if (adj.sugarTypeBonus > 0) {
+            console.log(`  💚 Natural Sugar Bonus:         +${adj.sugarTypeBonus}`);
+            totalAdjustments += adj.sugarTypeBonus;
+          }
+          if (adj.fatTypeBonus > 0) {
+            console.log(`  💚 Healthy Fat Bonus:           +${adj.fatTypeBonus}`);
+            totalAdjustments += adj.fatTypeBonus;
+          }
+          if (adj.processingPenalty > 0) {
+            console.log(`  🚫 Processing Penalty:          -${adj.processingPenalty} (${enhancedData.foodContext.processingLevel})`);
+            totalAdjustments -= adj.processingPenalty;
+          }
+          if (adj.glycemicPenalty > 0) {
+            console.log(`  🚫 Glycemic Impact Penalty:     -${adj.glycemicPenalty} (${enhancedData.foodContext.glycemicImpact})`);
+            totalAdjustments -= adj.glycemicPenalty;
+          }
+          if (adj.cookingPenalty > 0) {
+            console.log(`  🚫 Cooking Method Penalty:      -${adj.cookingPenalty} (${enhancedData.foodContext.cookingMethod})`);
+            totalAdjustments -= adj.cookingPenalty;
+          }
+
+          if (totalAdjustments === 0) {
+            console.log('  ✓ No adjustments applied');
+          } else {
+            console.log('  ─────────────────────────────────────────────────');
+            console.log(`  📊 Total Adjustments:           ${totalAdjustments > 0 ? '+' : ''}${totalAdjustments}`);
+          }
+          console.log('');
+
+          // Section 5: Final Score
+          console.log('┌─────────────────────────────────────────────────────────────┐');
+          console.log('│  🏆 FINAL SCORE                                              │');
+          console.log('└─────────────────────────────────────────────────────────────┘');
+          console.log(`  ${subtotal.toFixed(1)} ${totalAdjustments >= 0 ? '+' : ''} ${totalAdjustments} = ${enhancedScore.overallScore}/100`);
+          console.log(`  Category: ${enhancedScore.category.toUpperCase()}`);
+          console.log('\n╔════════════════════════════════════════════════════════════════╗\n');
+
         } catch (historyError) {
           console.error('⚠️ Failed to save to history:', historyError);
-          // Don't fail the request if history save fails
         }
       }
 
-      // Clean up uploaded file
-      fs.unlinkSync(imagePath);
-      console.log('🗑️ Cleaned up temporary file');
-
-      // Return results with AI advice
-      res.json({
-        success: true,
-        nutritionData,
-        healthScore,
-        aiAdvice, // New field!
-        message: 'Nutrition label analyzed successfully',
+      // Clean up uploaded files
+      uploadedFiles.forEach(path => {
+        if (fs.existsSync(path)) fs.unlinkSync(path);
       });
+      console.log('🗑️ Cleaned up temporary files');
 
-    } catch (error: any) {
-      console.error('❌ Error analyzing nutrition label:', error);
-      
-      // Clean up file if it exists
-      if (req.file?.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
-
-      // Provide user-friendly error messages
-      let errorMessage = 'Failed to analyze nutrition label';
-      let statusCode = 500;
-      
-      if (error?.status === 503 || error?.message?.includes('503') || error?.message?.includes('overloaded')) {
-        errorMessage = 'AI service is temporarily overloaded. Please try again in a few moments.';
-        statusCode = 503;
-      } else if (error?.message?.includes('API key')) {
-        errorMessage = 'API configuration error. Please contact support.';
-        statusCode = 500;
-      }
-
-      res.status(statusCode).json({
-        error: errorMessage,
-        details: error instanceof Error ? error.message : 'Unknown error',
-        retryable: statusCode === 503,
-      });
-    }
-  }
-
-  /**
-   * POST /api/scan/food-photo
-   * Analyze actual food from photo using AI recognition
-   */
-  async analyzeFoodPhoto(req: AuthRequest, res: Response) {
-    try {
-      // Check if file was uploaded
-      if (!req.file) {
-        return res.status(400).json({ error: 'No image file provided' });
-      }
-
-      const imagePath = req.file.path;
-      console.log('🍔 Received food photo for analysis:', imagePath);
-
-      // Read image and convert to base64
-      const imageBuffer = fs.readFileSync(imagePath);
-      const imageBase64 = imageBuffer.toString('base64');
-
-      // Recognize food and get nutrition data
-      const foodData = await foodRecognitionService.recognizeAndAnalyzeFood(imageBase64);
-
-      // Convert per-100g nutrition to our standard format
-      const nutritionData = {
-        servingSize: '100g (Estimated)',
-        calories: foodData.nutritionPer100g.calories,
-        totalFat: foodData.nutritionPer100g.totalFat,
-        saturatedFat: foodData.nutritionPer100g.saturatedFat,
-        transFat: foodData.nutritionPer100g.transFat,
-        cholesterol: foodData.nutritionPer100g.cholesterol,
-        sodium: foodData.nutritionPer100g.sodium,
-        totalCarbs: foodData.nutritionPer100g.totalCarbs,
-        fiber: foodData.nutritionPer100g.fiber,
-        sugars: foodData.nutritionPer100g.sugars,
-        protein: foodData.nutritionPer100g.protein,
+      // Format AI advice for frontend
+      const aiAdvice = {
+        explanation: enhancedScore.aiInsights.join(' '),
+        healthyAlternatives: enhancedScore.recommendations,
+        detailedAdvice: `Based on AI analysis, this food is ${enhancedData.foodContext.processingLevel} with ${enhancedData.foodContext.overallQuality} quality. ${enhancedScore.warnings.length > 0 ? 'Health concerns: ' + enhancedScore.warnings.join(', ') : 'No major health concerns detected.'}`,
       };
 
-      // Get user entity for personalized scoring
-      let user: User | undefined;
-      if (req.user?.userId) {
-        const userRepository = AppDataSource.getRepository(User);
-        const foundUser = await userRepository.findOne({ where: { id: req.user.userId } });
-        if (foundUser) user = foundUser;
-      }
-
-      // Calculate health score using advanced scoring (uses all 18 health markers)
-      const healthScore = advancedScoringService.calculateAdvancedScore(nutritionData, user);
-
-      // Generate AI health advice (convert User to UserProfile for compatibility)
-      console.log('🤖 Generating AI health advice...');
-      const userProfile = user ? {
-        bloodSugarMgDl: user.glucose,
-        ldlCholesterolMgDl: user.ldl,
-        weightKg: user.weight,
-        heightCm: user.height,
-      } : undefined;
-      
-      const aiAdvice = await aiAdviceService.generateHealthAdvice(
-        nutritionData,
-        healthScore,
-        userProfile
-      );
-
-      // Save to scan history
-      if (req.user?.userId) {
-        try {
-          const scanRepository = AppDataSource.getRepository(Scan);
-          const imageBuffer = fs.readFileSync(imagePath);
-          const imageBase64 = imageBuffer.toString('base64');
-          
-          const newScan = scanRepository.create({
-            userId: req.user.userId,
-            scanType: 'food',
-            foodName: foodData.foodName,
-            confidenceLevel: foodData.confidence,
-            image: imageBase64,
-            nutritionData,
-            healthScore,
-          });
-          
-          await scanRepository.save(newScan);
-          console.log(`💾 Saved food photo scan to history: ${foodData.foodName}`);
-        } catch (historyError) {
-          console.error('⚠️ Failed to save to history:', historyError);
-          // Don't fail the request if history save fails
-        }
-      }
-
-      // Clean up uploaded file
-      fs.unlinkSync(imagePath);
-      console.log('🗑️ Cleaned up temporary file');
-
-      // Return results with food recognition data
+      // Return enhanced results
       res.json({
         success: true,
-        scanType: 'food-photo', // Indicate this is food recognition
-        foodName: foodData.foodName,
-        confidence: foodData.confidence,
-        nutritionData,
-        healthScore,
-        aiAdvice,
-        disclaimer: '⚠️ Nutrition values are estimates based on standard food data. Actual values may vary by preparation method, ingredients, and portion size.',
-        message: 'Food photo analyzed successfully',
+        scanType: 'enhanced-ai',
+        imagesAnalyzed: files.length,
+        
+        // Food identification
+        foodName: enhancedData.foodContext.foodName,
+        confidence: enhancedData.foodContext.confidence,
+        category: enhancedData.foodContext.category,
+        
+        // Nutrition data
+        nutritionData: {
+          calories: enhancedData.calories,
+          totalFat: enhancedData.totalFat,
+          saturatedFat: enhancedData.saturatedFat,
+          transFat: enhancedData.transFat,
+          cholesterol: enhancedData.cholesterol,
+          sodium: enhancedData.sodium,
+          totalCarbohydrates: enhancedData.totalCarbohydrates,
+          dietaryFiber: enhancedData.dietaryFiber,
+          sugars: enhancedData.sugars,
+          protein: enhancedData.protein,
+          servingSize: enhancedData.servingSize,
+        },
+        
+        // AI-powered context
+        foodContext: enhancedData.foodContext,
+        
+        // Enhanced health score
+        healthScore: enhancedScore,
+        
+        // AI advice formatted for frontend
+        aiAdvice: aiAdvice,
+        
+        message: 'Food analyzed successfully with AI-enhanced intelligence',
       });
 
     } catch (error: any) {
-      console.error('❌ Error analyzing food photo:', error);
+      console.error('❌ Error in enhanced analysis:', error);
       
-      // Clean up file if it exists
-      if (req.file?.path && fs.existsSync(req.file.path)) {
-        fs.unlinkSync(req.file.path);
-      }
+      // Clean up uploaded files
+      uploadedFiles.forEach(path => {
+        if (fs.existsSync(path)) fs.unlinkSync(path);
+      });
 
-      // Provide user-friendly error messages
-      let errorMessage = 'Failed to analyze food photo';
+      let errorMessage = 'Failed to analyze food images';
       let statusCode = 500;
       
       if (error?.status === 503 || error?.message?.includes('503') || error?.message?.includes('overloaded')) {
@@ -257,8 +386,7 @@ export class ScanController {
     res.json({
       message: 'Scan endpoint is working! 🎉',
       endpoints: {
-        analyze: 'POST /api/scan/analyze - Upload nutrition label image',
-        foodPhoto: 'POST /api/scan/food-photo - Upload food photo for AI analysis',
+        enhanced: 'POST /api/scan/enhanced - Upload 1-3 images for AI-enhanced analysis',
       },
     });
   }

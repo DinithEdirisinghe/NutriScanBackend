@@ -13,7 +13,7 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'nutrition-label-' + uniqueSuffix + path.extname(file.originalname));
+    cb(null, 'food-image-' + uniqueSuffix + path.extname(file.originalname));
   }
 });
 
@@ -34,7 +34,6 @@ const upload = multer({
 
 // Routes
 router.get('/test', scanController.testEndpoint);
-router.post('/analyze', authMiddleware, upload.single('image'), scanController.analyzeLLabel);
-router.post('/food-photo', authMiddleware, upload.single('image'), scanController.analyzeFoodPhoto);
+router.post('/enhanced', authMiddleware, upload.array('images', 3), scanController.analyzeEnhanced);
 
 export default router;

@@ -21,7 +21,7 @@ export class Scan {
   userId: string;
 
   @Column({ name: 'scan_type' })
-  scanType: 'label' | 'food'; // label = nutrition table, food = food photo
+  scanType: 'label' | 'food' | 'enhanced'; // label = nutrition table, food = food photo, enhanced = AI multi-image
 
   @Column({ type: 'text', nullable: true })
   image: string; // Base64 image data
@@ -47,10 +47,29 @@ export class Scan {
   @Column({ type: 'jsonb', name: 'health_score' })
   healthScore: {
     overallScore: number;
-    sugarScore: number;
-    fatScore: number;
-    sodiumScore: number;
-    calorieScore: number;
+    breakdown?: {
+      sugarScore: number;
+      fatScore: number;
+      sodiumScore: number;
+      calorieScore: number;
+      qualityScore?: number;
+    };
+    adjustments?: {
+      sugarTypeBonus: number;
+      fatTypeBonus: number;
+      processingPenalty: number;
+      glycemicPenalty: number;
+      cookingPenalty: number;
+    };
+    recommendations?: string[];
+    aiInsights?: string[];
+    warnings?: string[];
+    category?: string;
+    // Legacy fields for backward compatibility
+    sugarScore?: number;
+    fatScore?: number;
+    sodiumScore?: number;
+    calorieScore?: number;
   };
 
   @Column({ name: 'confidence_level', nullable: true })
